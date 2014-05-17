@@ -1,0 +1,197 @@
+#!/bin/bash
+
+export BASEDIR=`pwd`
+
+export PATH=$BASEDIR/tools:$BASEDIR/tools/apktool:$PATH
+export SMALI=$BASEDIR/tools/smali.jar
+export BAKSMALI=$BASEDIR/tools/baksmali.jar
+export APILEVEL=19
+export FRAMEWORK=$BASEDIR/source/system/framework
+
+
+function deodex ()
+{
+    [ -d $BASEDIR/working ] || mkdir $BASEDIR/working
+    basename=$(echo $1 | awk -F\. '{print $1}')
+    echo $basename
+    odexfile=$(find $BASEDIR/source -name $basename.odex)
+    odexfile=$(echo $odexfile | sed "s#\s##g")
+    if [ -n "$odexfile" ] 
+    then
+      echo "File exists"
+    else
+      echo "File missing"
+      return 0
+    fi
+    
+    echo $odexfile
+    playfile=$(find $BASEDIR/source -name $1)
+    echo $playfile
+    playpath=$(echo $playfile | sed "s#$BASEDIR/source/##g" | awk -F\/ 'sub(FS $NF,x)')
+    echo $playpath
+    playfilename=$(echo $playfile | awk -F\/ '{print $NF}')
+    echo $playfilename
+    [ -d $BASEDIR/playground/$playpath ] || mkdir -p $BASEDIR/playground/$playpath
+    cp $playfile $BASEDIR/playground/$playpath/
+    cp $odexfile $BASEDIR/playground/$playpath/
+    playodex=$(echo $odexfile | sed "s#$BASEDIR/source/#$BASEDIR/playground/#g")
+    
+    WORKING="$BASEDIR/working"
+    java_cmd="java -Xmx512m -jar $BAKSMALI -a $APILEVEL -d $FRAMEWORK -x $playodex -o $WORKING"
+    echo $java_cmd
+    $java_cmd
+    is_error=$?
+    if [ "$is_error" == "0" ] && [ -d $WORKING ]
+    then
+      echo "Assembling into classes.dex ..."
+      java_cmd="java -Xmx512m -jar $SMALI -a $APILEVEL -o classes.dex $WORKING"
+      echo $java_cmd
+      $java_cmd
+      rm -rf $WORKING
+      if [ -e classes.dex ]
+      then
+        newbasename=`echo $playodex | sed 's/.odex//'`
+        main_file=$newbasename.apk
+        error_found=no
+        if [ -e $main_file ]
+        then
+          echo "Found $main_file"
+          ext=apk
+        else
+          main_file=$newbasename.jar
+          
+          if [ -e $main_file ]
+          then
+            echo "Found $main_file"
+            ext=jar
+          else          
+            echo "ERROR: Can't find $newbasename.jar or $newbasename.apk"
+            error_found=yes
+          fi
+        fi
+        if [ $error_found == yes ]
+        then
+          echo "Removing classes.dex ..."
+          rm -f classes.dex
+        else
+          echo "Put classes.dex into $main_file ..."
+          zip -r -q $main_file classes.dex
+          rm -f classes.dex
+          if [ -e $main_file ]
+          then
+            echo "$main_file has been deodexed"
+          fi
+          return 0
+        fi
+      else
+        echo "WARNING: Unable to produce classes.dex!"
+        return 1
+      fi          
+    else
+      rm -rf $WORKING
+      return 1
+    fi
+
+}
+
+function setupPlayground ()
+{
+  [ -d $BASEDIR/playground ] || mkdir $BASEDIR/playground
+  [ -d $BASEDIR/source ] || (echo "Please setup source dir first" && return 1)
+}
+
+function playWith ()
+{
+  [ -d $BASEDIR/playground ] || mkdir $BASEDIR/playground
+  basename=$(echo $1 | awk -F\. '{print $1}')
+  echo $basename
+  odexfile=$(find $BASEDIR/source -name $basename.odex)
+  echo $odexfile
+  playfile=$(find $BASEDIR/source -name $1)
+  echo $playfile
+  playpath=$(echo $playfile | sed "s#$BASEDIR/source/##g" | awk -F\/ 'sub(FS $NF,x)')
+  echo $playpath
+  playfilename=$(echo $playfile | awk -F\/ '{print $NF}')
+  echo $playfilename
+  mkdir -p $BASEDIR/playground/$playpath
+  cp $playfile $BASEDIR/playground/$playpath/
+  cp $odexfile $BASEDIR/playground/$playpath/
+}
+
+function cleanPlayGround ()
+{
+  [ -d $BASEDIR/playground ] && rm -rfv $BASEDIR/playground 
+}
+
+function pullSystemFromPhone ()
+{
+    [ -d $BASEDIR/source ] || mkdir $BASEDIR/source
+    adb shell mkdir /mnt/sdcard/tmpModLoader/;
+    for i in `adb shell su -c find /system -iname "*.apk" -o -iname "*.jar" -o -iname "*.odex"`;do
+        realOut=$(echo $i | sed "s#\s##g")
+        echo "Grabbing $realOut";
+        thefile=$(echo $realOut | awk -F\/ '{print $NF}');
+        echo "adb shell su -c cp $realOut /mnt/sdcard/tmpModLoader/$thefile";
+        adb shell su -c cp $realOut /mnt/sdcard/tmpModLoader/$thefile;
+        thepath=$(echo $realOut | awk -F\/ 'sub(FS $NF,x)');
+        mkdir -p $BASEDIR/source/$thepath
+        adb pull /mnt/sdcard/tmpModLoader/$thefile $BASEDIR/source/$thepath/
+        adb shell rm /mnt/sdcard/tmpModLoader/$thefile
+    done;
+    adb shell rm -rfv /mnt/sdcard/tmpModLoader
+    #rm -rf $BASEDIR/sourceTest
+}
+
+function pullSystemFromROM ()
+{
+    ROM=$1
+    cwd=`pwd`
+    [ -d $BASEDIR/source ] || mkdir $BASEDIR/source
+    [ -f $ROM ] || (echo "Can't locate the ROM file specified" && return 1)
+    [ -d $BASEDIR/working ] || mkdir $BASEDIR/working
+    cp $ROM $BASEDIR/working/
+    cd $BASEDIR/working/
+    tempROM=$(find . -iname "*.zip")
+    echo "Unzipping ROM, this may take a few minutes."
+    unzip $tempROM 
+    echo "Done, creating file list now."
+    for i in `find $BASEDIR/working/system/ -iname "*.apk" -o -iname "*.jar" -o -iname "*.odex"`;do
+        thefile=$(echo $i | awk -F\/ '{print $NF}');
+        thepath=$(echo $i | awk -F\/ 'sub(FS $NF,x)' | sed "s#$BASEDIR/working/##g");
+        mkdir -p $BASEDIR/source/$thepath
+        echo "cp $i $BASEDIR/source/$thepath/"
+        cp "$i" $BASEDIR/source/$thepath/
+    done;
+    cd $cwd
+    rm -rf $BASEDIR/working
+}
+
+function cleanSource()
+{
+  [ -d $BASEDIR/source ] && rm -rfv $BASEDIR/source
+}
+
+function buildMod ()
+{
+echo buildmod
+}
+
+function buildFlashable ()
+{
+echo buildflashable
+}
+
+function odex ()
+{
+echo odex
+}
+
+function build ()
+{
+    echo build
+}
+
+function decompile ()
+{
+    echo decompile
+}
