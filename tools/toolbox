@@ -7,6 +7,7 @@ export SMALI=$BASEDIR/tools/smali.jar
 export BAKSMALI=$BASEDIR/tools/baksmali.jar
 export APILEVEL=19
 export FRAMEWORK=$BASEDIR/source/system/framework
+export APKTOOL=$BASEDIR/tools/apktool/apktool
 
 
 function deodex ()
@@ -16,13 +17,7 @@ function deodex ()
     echo $basename
     odexfile=$(find $BASEDIR/source -name $basename.odex)
     odexfile=$(echo $odexfile | sed "s#\s##g")
-    if [ -n "$odexfile" ] 
-    then
-      echo "File exists"
-    else
-      echo "File missing"
-      return 0
-    fi
+
     
     echo $odexfile
     playfile=$(find $BASEDIR/source -name $1)
@@ -33,6 +28,13 @@ function deodex ()
     echo $playfilename
     [ -d $BASEDIR/playground/$playpath ] || mkdir -p $BASEDIR/playground/$playpath
     cp $playfile $BASEDIR/playground/$playpath/
+    if [ -n "$odexfile" ] 
+    then
+      echo "Found odex file"
+    else
+      echo "File already seems to be deodexed, adding to playground"
+      return 0
+    fi
     cp $odexfile $BASEDIR/playground/$playpath/
     playodex=$(echo $odexfile | sed "s#$BASEDIR/source/#$BASEDIR/playground/#g")
     
@@ -80,6 +82,7 @@ function deodex ()
           if [ -e $main_file ]
           then
             echo "$main_file has been deodexed"
+            rm $BASEDIR/playground/$playpath/$basename.odex
           fi
           return 0
         fi
@@ -126,19 +129,19 @@ function cleanPlayGround ()
 function pullSystemFromPhone ()
 {
     [ -d $BASEDIR/source ] || mkdir $BASEDIR/source
-    adb shell mkdir /mnt/sdcard/tmpModLoader/;
+    adb shell mkdir /mnt/sdcard/tmpModStudio/;
     for i in `adb shell su -c find /system -iname "*.apk" -o -iname "*.jar" -o -iname "*.odex"`;do
         realOut=$(echo $i | sed "s#\s##g")
         echo "Grabbing $realOut";
         thefile=$(echo $realOut | awk -F\/ '{print $NF}');
-        echo "adb shell su -c cp $realOut /mnt/sdcard/tmpModLoader/$thefile";
-        adb shell su -c cp $realOut /mnt/sdcard/tmpModLoader/$thefile;
+        echo "adb shell su -c cp $realOut /mnt/sdcard/tmpModStudio/$thefile";
+        adb shell su -c cp $realOut /mnt/sdcard/tmpModStudio/$thefile;
         thepath=$(echo $realOut | awk -F\/ 'sub(FS $NF,x)');
         mkdir -p $BASEDIR/source/$thepath
-        adb pull /mnt/sdcard/tmpModLoader/$thefile $BASEDIR/source/$thepath/
-        adb shell rm /mnt/sdcard/tmpModLoader/$thefile
+        adb pull /mnt/sdcard/tmpModStudio/$thefile $BASEDIR/source/$thepath/
+        adb shell rm /mnt/sdcard/tmpModStudio/$thefile
     done;
-    adb shell rm -rfv /mnt/sdcard/tmpModLoader
+    adb shell rm -rf /mnt/sdcard/tmpModStudio
     #rm -rf $BASEDIR/sourceTest
 }
 
@@ -173,25 +176,91 @@ function cleanSource()
 
 function buildMod ()
 {
-echo buildmod
+  echo "Feature coming soon"
 }
 
 function buildFlashable ()
 {
-echo buildflashable
+  echo "Feature coming soon"
 }
 
 function odex ()
 {
 echo odex
+  export BOOTCLASSPATH=$(adb shell su -c grep BOOTCLASSPATH init* -h | grep -v "#" | awk -F\  '{print $3}' | sed "s#\s##g")
+  
+  adb shell su -c mount -o remount,rw /system
+  adb push $BASEDIR/tools/dexopt-wrapper /data/local/tmp/
+  adb shell su -c dd if=/data/local/tmp/dexopt-wrapper of=/system/bin/dexopt-wrapper
+  adb shell su -c chmod 777 /system/bin/dexopt-wrapper
+  adb shell mkdir /mnt/sdcard/tmpModStudio/
+  
+  ODEXTARGET=$(find $BASEDIR/playground -iname "$1")
+  TARGETPATH=$(find $BASEDIR/playground -iname "$1" | sed "s#$1##g")
+  adb push $ODEXTARGET /mnt/sdcard/tmpModStudio/
+  basename=$(echo $1 | awk -F\. '{print $1}' | sed "s#$BASEDIR/playground##g")
+
+  phoneodex=$(adb shell su -c find /system -iname "$basename.odex" | sed "s#\s##g")
+
+  adb shell su -c cp $phoneodex /mnt/sdcard/tmpModStudio/$basename.original.odex
+  adb shell su -c dexopt-wrapper /mnt/sdcard/tmpModStudio/$1 /mnt/sdcard/tmpModStudio/$basename.odex $BOOTCLASSPATH
+  adb shell su -c dd if=/mnt/sdcard/tmpModStudio/$basename.original.odex of=/mnt/sdcard/tmpModStudio/$basename.odex bs=1 count=20 skip=52 seek=52 conv=notrunc
+  
+  adb pull /mnt/sdcard/tmpModStudio/$basename.odex $TARGETPATH
+  adb pull /mnt/sdcard/tmpModStudio/$1 $TARGETPATH
+  adb shell su -c rm -rf /mnt/sdcard/tmpModStudio
 }
 
 function build ()
 {
-    echo build
+  echo "$1"
+  echo "find $BASEDIR/playground -iname \"$1\""
+  ORIGINALFILE=$(find $BASEDIR/playground -iname "$1")
+  echo "Original file is $ORIGINALFILE"
+  FILETOBUILD=$(find $BASEDIR/playground -iname "$1.out")
+  echo "Output file is $FILETOBUILD"
+  echo "cp $ORIGINALFILE $ORIGINALFILE.original"
+  cp $ORIGINALFILE $ORIGINALFILE.original
+  echo "$APKTOOL b -f -t modStudio $FILETOBUILD -o $ORIGINALFILE"
+  $APKTOOL b -c -f -t modStudio $FILETOBUILD -o $ORIGINALFILE
 }
 
 function decompile ()
 {
-    echo decompile
+  echo "Searching for framework files in $BASEDIR/source"
+  for i in `find $BASEDIR/source -iname "*.apk" -o -iname "*.jar"`;
+    do
+    $APKTOOL if $i -t modStudio >> /dev/null 2>&1;
+    done;
+  FILETODECOMPILE=$(find $BASEDIR/playground -iname "$1")
+  echo "Decompiling $FILETODECOMPILE"
+  $APKTOOL d -f -t modStudio $FILETODECOMPILE -o $FILETODECOMPILE.out
+}
+
+
+function installFromPlayground ()
+{
+echo "Install from playground"
+  adb shell su -c mount -o remount,rw /system
+  adb shell mkdir /mnt/sdcard/tmpModStudio/
+  adb shell mkdir /mnt/sdcard/ModStudioBackups/
+  for i in `find $BASEDIR/playground -type f`;do
+    echo $i
+    thepath=$(echo $i | awk -F\/ 'sub(FS $NF,x)' | sed "s#$BASEDIR/playground/##g")
+    echo $thepath
+    thefile=$(echo $i | awk -F\/ '{print $NF}')
+    echo $thefile
+    
+    adb push $i /mnt/sdcard/tmpModStudio/
+    echo "Backing up /$thepath/$thefile in /mnt/sdcard/ModStudioBackups/"
+    adb shell su -c cp /$thepath/$thefile /mnt/sdcard/ModStudioBackups/
+    echo "Copying: $i"
+    echo "To: /$thepath/$thefile"
+    adb shell su -c dd if=/mnt/sdcard/tmpModStudio/$thefile of=/$thepath/$thefile
+    adb shell su -c rm /mnt/sdcard/tmpModStudio/$thefile
+
+  done;
+  adb shell su -c rm -rf /mnt/sdcard/tmpModStudio
+  echo "Rebooting your phone"
+  adb reboot
 }
