@@ -223,6 +223,7 @@ function build ()
   cp $ORIGINALFILE $ORIGINALFILE.original
   echo "$APKTOOL b -f -t modStudio $FILETOBUILD -o $ORIGINALFILE"
   $APKTOOL b -c -f -t modStudio $FILETOBUILD -o $ORIGINALFILE
+  mv $FILETOBUILD $BASEDIR
 }
 
 function decompile ()
