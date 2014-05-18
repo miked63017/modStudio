@@ -177,6 +177,9 @@ function cleanSource()
 function buildMod ()
 {
   echo "Feature coming soon"
+  DECOMPILEDFILEMOD=$(find $BASEDIR/playground -iname "$1.out")
+  DECOMPILEDFILEORIG=$(find $BASEDIR/.origcode -iname "$1.out")
+  diff -ur $DECOMPILEDFILEORIG $DECOMPILEDFILEMOD > $DECOMPILEDFILEORIG/../$1.patch
 }
 
 function buildFlashable ()
@@ -223,7 +226,8 @@ function build ()
   cp $ORIGINALFILE $ORIGINALFILE.original
   echo "$APKTOOL b -f -t modStudio $FILETOBUILD -o $ORIGINALFILE"
   $APKTOOL b -c -f -t modStudio $FILETOBUILD -o $ORIGINALFILE
-  mv $FILETOBUILD $BASEDIR
+  [ -d $BASEDIR/.modcode ] || mkdir $BASEDIR/.modcode
+  mv $FILETOBUILD $BASEDIR/.modcode/
 }
 
 function decompile ()
@@ -236,6 +240,8 @@ function decompile ()
   FILETODECOMPILE=$(find $BASEDIR/playground -iname "$1")
   echo "Decompiling $FILETODECOMPILE"
   $APKTOOL d -f -t modStudio $FILETODECOMPILE -o $FILETODECOMPILE.out
+  [ -d $BASEDIR/.origcode ] || mkdir $BASEDIR/.origcode
+  cp -arf $FILETODECOMPILE.out $BASEDIR/.origcode/
 }
 
 
@@ -245,6 +251,7 @@ echo "Install from playground"
   adb shell su -c mount -o remount,rw /system
   adb shell mkdir /mnt/sdcard/tmpModStudio/
   adb shell mkdir /mnt/sdcard/ModStudioBackups/
+  find $BASEDIR/playground -iname "*.origignal*" -exec rm -f {} \;
   for i in `find $BASEDIR/playground -type f`;do
     echo $i
     thepath=$(echo $i | awk -F\/ 'sub(FS $NF,x)' | sed "s#$BASEDIR/playground/##g")
